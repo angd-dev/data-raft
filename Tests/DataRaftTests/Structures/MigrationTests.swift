@@ -55,7 +55,7 @@ import Foundation
 }
 
 private extension MigrationTests {
-    struct DummyVersion: VersionProtocol {
+    struct DummyVersion: VersionRepresentable {
         let rawValue: UInt32
         
         init(rawValue: UInt32) {

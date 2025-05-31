@@ -38,7 +38,7 @@ import DataLiteCore
 }
 
 private extension UserVersionStorageTests {
-    struct Version: RawRepresentable, VersionProtocol, Equatable {
+    struct Version: RawRepresentable, VersionRepresentable, Equatable {
         let rawValue: UInt32
         
         init(rawValue: UInt32) {
@@ -50,7 +50,7 @@ private extension UserVersionStorageTests {
         }
     }
     
-    struct NilVersion: RawRepresentable, VersionProtocol {
+    struct NilVersion: RawRepresentable, VersionRepresentable {
         let rawValue: UInt32
         
         init?(rawValue: UInt32) {

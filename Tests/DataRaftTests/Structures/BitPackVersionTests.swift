@@ -38,7 +38,7 @@ import DataRaft
             Issue.record("Expected BitPackVersion.Error.majorOverflow, but succeeded")
         } catch BitPackVersion.Error.majorOverflow(let value) {
             let error = BitPackVersion.Error.majorOverflow(value)
-            let description = "Major version overflow: \(value). Allowed range: 0...4095"
+            let description = "Major version overflow: \(value). Allowed range: 0...4095."
             #expect(value == 4096)
             #expect(error.localizedDescription == description)
         } catch {
@@ -52,7 +52,7 @@ import DataRaft
             Issue.record("Expected BitPackVersion.Error.minorOverflow, but succeeded")
         } catch BitPackVersion.Error.minorOverflow(let value) {
             let error = BitPackVersion.Error.minorOverflow(value)
-            let description = "Minor version overflow: \(value). Allowed range: 0...4095"
+            let description = "Minor version overflow: \(value). Allowed range: 0...4095."
             #expect(value == 4096)
             #expect(error.localizedDescription == description)
         } catch {
@@ -66,7 +66,7 @@ import DataRaft
             Issue.record("Expected BitPackVersion.Error.patchOverflow, but succeeded")
         } catch BitPackVersion.Error.patchOverflow(let value) {
             let error = BitPackVersion.Error.patchOverflow(value)
-            let description = "Patch version overflow: \(value). Allowed range: 0...255"
+            let description = "Patch version overflow: \(value). Allowed range: 0...255."
             #expect(value == 256)
             #expect(error.localizedDescription == description)
         } catch {
@@ -163,7 +163,7 @@ import DataRaft
             Issue.record("Expected failure for: \(input)")
         } catch BitPackVersion.ParseError.invalidFormat(let str) {
             let error = BitPackVersion.ParseError.invalidFormat(str)
-            let description = "Invalid version format: \(str). Expected format is x.y or x.y.z"
+            let description = "Invalid version format: \(str). Expected something like '1.2' or '1.2.3'."
             #expect(str == input)
             #expect(error.localizedDescription == description)
         } catch {
