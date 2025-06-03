@@ -27,6 +27,15 @@ let package = Package(
                 .product(name: "DataLiteCore", package: "data-lite-core"),
                 .product(name: "DataLiteCoder", package: "data-lite-coder")
             ]
+        ),
+        .testTarget(
+            name: "DataRaftTests",
+            dependencies: ["DataRaft"],
+            resources: [
+                .copy("Resources/migration_1.sql"),
+                .copy("Resources/migration_2.sql"),
+                .copy("Resources/migration_3.sql")
+            ]
         )
     ]
 )
