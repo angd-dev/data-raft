@@ -84,6 +84,21 @@ public final class MigrationService<Storage: VersionStorage>: DatabaseService {
     
     // MARK: - Methods
     
+    @available(*, unavailable)
+    public override func perform<T>(
+        _ closure: (Connection) throws -> T
+    ) rethrows -> T {
+        fatalError()
+    }
+    
+    @available(*, unavailable)
+    public override func perform<T>(
+        in transaction: SQLiteTransactionType,
+        closure: (Connection) throws -> T
+    ) rethrows -> T {
+        fatalError()
+    }
+    
     /// Registers a new migration to be executed during the migration process.
     ///
     /// A migration must have a unique combination of version and script URL.
@@ -112,7 +127,7 @@ public final class MigrationService<Storage: VersionStorage>: DatabaseService {
     ///   if a migration fails to execute or version update fails.
     public func migrate() throws {
         do {
-            try perform(in: .exclusive) { connection in
+            try super.perform(in: .exclusive) { connection in
                 try storage.prepare(connection)
                 let version = try storage.getVersion(connection)
                 let migrations = migrations
