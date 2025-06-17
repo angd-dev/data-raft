@@ -11,7 +11,7 @@ import DataLiteCore
 /// and `RawRepresentable`, where `RawValue == UInt32`. This allows
 /// converting between stored integer values and semantic version types
 /// defined by the application.
-public class UserVersionStorage<
+public final class UserVersionStorage<
     Version: VersionRepresentable & RawRepresentable
 >: VersionStorage where Version.RawValue == UInt32 {
     /// Errors related to reading or decoding the version.
