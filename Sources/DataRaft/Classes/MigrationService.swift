@@ -42,7 +42,7 @@ import DataLiteCore
 /// - Store the version in a custom table (e.g., `schema_version`)
 ///
 /// This allows you to fully control both how versions are compared and where they are stored.
-public final class MigrationService<Storage: VersionStorage>: DatabaseService {
+public final class MigrationService<Storage: VersionStorage> {
     /// A type representing the version of the schema, as defined by the underlying storage.
     ///
     /// This alias simplifies access to the version type used throughout the migration service.
@@ -61,6 +61,7 @@ public final class MigrationService<Storage: VersionStorage>: DatabaseService {
     
     // MARK: - Properties
     
+    private let service: DatabaseService
     private let storage: Storage
     private var migrations = Set<Migration<Version>>()
     
@@ -78,26 +79,14 @@ public final class MigrationService<Storage: VersionStorage>: DatabaseService {
         connection: Connection,
         queue: DispatchQueue? = nil
     ) {
+        self.service = .init(
+            connection: connection,
+            queue: queue
+        )
         self.storage = storage
-        super.init(connection: connection, queue: queue)
     }
     
     // MARK: - Methods
-    
-    @available(*, unavailable)
-    public override func perform<T>(
-        _ closure: (Connection) throws -> T
-    ) rethrows -> T {
-        fatalError()
-    }
-    
-    @available(*, unavailable)
-    public override func perform<T>(
-        in transaction: SQLiteTransactionType,
-        closure: (Connection) throws -> T
-    ) rethrows -> T {
-        fatalError()
-    }
     
     /// Registers a new migration to be executed during the migration process.
     ///
@@ -127,7 +116,7 @@ public final class MigrationService<Storage: VersionStorage>: DatabaseService {
     ///   if a migration fails to execute or version update fails.
     public func migrate() throws {
         do {
-            try super.perform(in: .exclusive) { connection in
+            try service.perform(in: .exclusive) { connection in
                 try storage.prepare(connection)
                 let version = try storage.getVersion(connection)
                 let migrations = migrations
