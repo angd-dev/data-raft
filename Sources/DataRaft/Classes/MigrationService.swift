@@ -57,6 +57,9 @@ public final class MigrationService<Storage: VersionStorage> {
         
         /// Indicates that a migration failed to execute.
         case migrationFailed(Migration<Version>?, Swift.Error)
+        
+        /// Indicates that a migration script is empty.
+        case emptyMigrationScript(Migration<Version>)
     }
     
     // MARK: - Properties
@@ -124,8 +127,12 @@ public final class MigrationService<Storage: VersionStorage> {
                     .sorted { $0.version < $1.version }
                 
                 for migration in migrations {
+                    let script = try migration.script
+                    guard !script.isEmpty else {
+                        throw Error.emptyMigrationScript(migration)
+                    }
                     do {
-                        try connection.execute(sql: migration.script)
+                        try connection.execute(sql: script)
                     } catch {
                         throw Error.migrationFailed(migration, error)
                     }

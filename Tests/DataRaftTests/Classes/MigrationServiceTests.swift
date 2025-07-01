@@ -60,6 +60,27 @@ import DataLiteCore
         
         #expect(connection.userVersion == 0)
     }
+    
+    @Test func migrateWithEmptyMigration() throws {
+        let migration1 = Migration<Int32>(version: 1, byResource: "migration_1", extension: "sql", in: .module)!
+        let migration2 = Migration<Int32>(version: 2, byResource: "migration_2", extension: "sql", in: .module)!
+        let migration4 = Migration<Int32>(version: 4, byResource: "migration_4", extension: "sql", in: .module)!
+        
+        try migrationService.add(migration1)
+        try migrationService.add(migration2)
+        try migrationService.add(migration4)
+        
+        do {
+            try migrationService.migrate()
+            Issue.record("Expected migrationFailed error for version \(migration4.version)")
+        } catch MigrationService<VersionStorage>.Error.emptyMigrationScript(let migration) {
+            #expect(migration == migration4)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        
+        #expect(connection.userVersion == 0)
+    }
 }
 
 private extension MigrationServiceTests {
