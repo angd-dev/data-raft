@@ -1,2 +1,2 @@
 -- Wrong sql statement
-WRONG SQL STATEMENT
+WRONG SQL STATEMENT;

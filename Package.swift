@@ -16,7 +16,7 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/angd-dev/data-lite-core.git", .upToNextMinor(from: "0.2.0")),
+        .package(url: "https://github.com/angd-dev/data-lite-core.git", .upToNextMinor(from: "0.3.0")),
         .package(url: "https://github.com/angd-dev/data-lite-coder.git", .upToNextMinor(from: "0.1.0")),
         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.0.0")
     ],
@@ -34,7 +34,8 @@ let package = Package(
             resources: [
                 .copy("Resources/migration_1.sql"),
                 .copy("Resources/migration_2.sql"),
-                .copy("Resources/migration_3.sql")
+                .copy("Resources/migration_3.sql"),
+                .copy("Resources/migration_4.sql")
             ]
         )
     ]
