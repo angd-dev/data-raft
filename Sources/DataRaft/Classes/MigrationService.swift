@@ -68,6 +68,16 @@ public final class MigrationService<Storage: VersionStorage> {
     private let storage: Storage
     private var migrations = Set<Migration<Version>>()
     
+    /// A provider used to supply encryption keys for the database connection.
+    ///
+    /// This property allows delegating key management to an external object that conforms to
+    /// `DatabaseServiceKeyProvider`. When set, the key provider will be used to apply the
+    /// encryption key whenever a new connection is established or reconnected.
+    public weak var keyProvider: DatabaseServiceKeyProvider? {
+        get { service.keyProvider }
+        set { service.keyProvider = newValue }
+    }
+    
     // MARK: - Inits
     
     /// Creates a new instance of `MigrationService` with the given version storage and connection.

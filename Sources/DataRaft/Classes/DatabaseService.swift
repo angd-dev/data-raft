@@ -1,5 +1,6 @@
 import Foundation
 import DataLiteCore
+import DataLiteC
 
 /// A base class for services that operate on a database connection.
 ///
@@ -48,29 +49,73 @@ import DataLiteCore
 /// This approach allows you to build reusable service layers on top of a safe, transactional,
 /// and serialized foundation.
 open class DatabaseService {
+    /// A closure that provides a new database connection when invoked.
+    ///
+    /// `ConnectionProvider` is used to defer the creation of a `Connection` instance
+    /// until it is actually needed. It can throw errors if the connection cannot be
+    /// established or configured correctly.
+    ///
+    /// - Returns: A valid `Connection` instance.
+    /// - Throws: Any error encountered while opening or configuring the connection.
+    public typealias ConnectionProvider = () throws -> Connection
+    
+    /// A closure that performs a database operation using an active connection.
+    ///
+    /// The `Perform<T>` alias defines the signature for a database operation block
+    /// that receives a live `Connection` and either returns a result or throws an error.
+    /// It is commonly used to express atomic units of work in ``perform(_:)`` or
+    /// ``perform(in:closure:)`` calls.
+    ///
+    /// - Parameter T: The result type returned by the closure.
+    /// - Returns: A value of type `T` produced by the closure.
+    /// - Throws: Any error that occurs during execution of the database operation.
+    public typealias Perform<T> = (Connection) throws -> T
+    
     // MARK: - Properties
     
-    private let connection: Connection
+    private let provider: ConnectionProvider
+    private var connection: Connection
     private let queue: DispatchQueue
     private let queueKey = DispatchSpecificKey<Void>()
     
+    /// The object that provides the encryption key for the database connection.
+    ///
+    /// When this property is set, the service attempts to retrieve the encryption key from the provider
+    /// and apply it to the current database connection. The operation is performed synchronously
+    /// on the service’s internal queue to ensure thread safety.
+    ///
+    /// This allows external management of encryption keys, enabling features such as
+    /// dynamic key rotation or user-scoped keys.
+    ///
+    /// If retrieving or applying the key fails, the error is silently ignored.
+    /// Use caution to ensure the key provider is properly configured to avoid connection errors.
+    public weak var keyProvider: DatabaseServiceKeyProvider? {
+        didSet {
+            try? perform { connection in
+                if let key = try keyProvider?.databaseServiceKey(self) {
+                    try connection.apply(key)
+                }
+            }
+        }
+    }
+    
     // MARK: - Inits
     
-    /// Creates a new database service with the given connection and optional execution context.
+    /// Initializes a new database service with a connection provider and an optional dispatch queue.
     ///
-    /// If no queue is provided, an internal serial dispatch queue with `.utility` quality of service
-    /// is created to ensure safe access to the database connection.
-    ///
-    /// If a custom queue is provided, it is used as the target queue for the internal serial queue.
-    /// This allows the caller to influence execution priority or scheduling characteristics
-    /// without compromising thread safety.
+    /// The connection provider closure is called immediately to obtain the initial connection.
+    /// An internal serial queue is created for synchronizing access to the connection.
+    /// If a custom queue is provided, it is set as the target queue for the internal serial queue,
+    /// allowing control over execution priority and scheduling.
     ///
     /// - Parameters:
-    ///   - connection: The database connection to use.
+    ///   - provider: A closure that returns a `Connection` instance and may throw.
     ///   - queue: An optional dispatch queue to use as a target for internal serialization.
-    ///     If `nil`, a default internal serial queue is used.
-    public init(connection: Connection, queue: DispatchQueue? = nil) {
-        self.connection = connection
+    ///     If `nil`, a default internal serial queue with `.utility` QoS is used.
+    /// - Throws: Rethrows any error thrown by the connection provider.
+    public init(provider: @escaping ConnectionProvider, queue: DispatchQueue? = nil) rethrows {
+        self.provider = provider
+        self.connection = try provider()
         self.queue = .init(for: Self.self, qos: .utility)
         self.queue.setSpecific(key: queueKey, value: ())
         if let queue = queue {
@@ -78,40 +123,99 @@ open class DatabaseService {
         }
     }
     
+    /// Convenience initializer that creates a new database service from an existing connection,
+    /// optionally specifying a dispatch queue for serialization.
+    ///
+    /// This calls the designated initializer internally, wrapping the provided connection
+    /// in a closure provider. The dispatch queue behavior is the same as in the designated initializer.
+    ///
+    /// - Parameters:
+    ///   - connection: The existing database connection to use.
+    ///   - queue: An optional dispatch queue to use as a target for internal serialization.
+    ///     If `nil`, a default internal serial queue with `.utility` QoS is used.
+    public convenience init(connection: Connection, queue: DispatchQueue? = nil) {
+        self.init(provider: { connection }, queue: queue)
+    }
+    
     // MARK: - Methods
     
-    /// Executes the given closure with the underlying database connection.
+    /// Re-establishes the database connection by invoking the connection provider.
     ///
-    /// If the current thread is already executing on the service’s queue,
-    /// the closure is executed directly. Otherwise, it is dispatched synchronously
-    /// on the internal queue.
+    /// This method attempts to create a new `Connection` instance using the stored
+    /// `ConnectionProvider` closure. If a `keyProvider` is set, the service retrieves
+    /// the encryption key from the provider and applies it to the new connection.
     ///
-    /// - Parameter closure: A closure that receives the active `Connection`.
-    /// - Returns: The result of the closure.
-    /// - Throws: Any error thrown by the closure.
-    public func perform<T>(_ closure: (Connection) throws -> T) rethrows -> T {
-        switch DispatchQueue.getSpecific(key: queueKey) {
-        case .none: return try queue.sync { try closure(connection) }
-        case .some: return try closure(connection)
+    /// The existing connection is then replaced with the newly created one.
+    ///
+    /// The operation is executed synchronously on the internal queue via ``perform(_:)``
+    /// to ensure thread safety.
+    ///
+    /// - Throws: Any error thrown during connection creation or key application.
+    public func reconnect() throws {
+        try perform { _ in
+            let connection = try provider()
+            if let key = try keyProvider?.databaseServiceKey(self) {
+                try connection.apply(key)
+            }
+            self.connection = connection
         }
     }
     
-    /// Executes the given closure within a database transaction, if not already inside one.
+    /// Executes the given closure using the underlying database connection.
     ///
-    /// If the connection is in autocommit mode, the method wraps the closure
-    /// in a transaction using the specified transaction type. If the connection
-    /// is already inside a transaction, the closure is executed as-is.
+    /// This method ensures that all database operations are executed in a
+    /// thread-safe manner by serializing access on an internal dispatch queue.
     ///
-    /// If the closure throws, the transaction is rolled back. Otherwise, it is committed.
+    /// If the current thread is already running on the service’s queue,
+    /// the closure is executed immediately to avoid deadlocks or unnecessary context switches.
+    /// Otherwise, the closure is dispatched synchronously onto the internal queue.
+    ///
+    /// If the closure throws an `SQLiteError` with the code `SQLITE_NOTADB`
+    /// (indicating the database file is corrupted or not a database),
+    /// this method attempts to reconnect by reinitializing the connection
+    /// and then rethrows the error.
+    ///
+    /// - Parameter closure: A closure that receives the active `Connection`
+    ///   and returns a generic result.
+    /// - Returns: The result returned by the closure.
+    /// - Throws: Any error thrown by the closure, including errors from reconnect attempts.
+    public func perform<T>(_ closure: Perform<T>) rethrows -> T {
+        do {
+            switch DispatchQueue.getSpecific(key: queueKey) {
+            case .none: return try queue.sync { try closure(connection) }
+            case .some: return try closure(connection)
+            }
+        } catch let error as SQLiteError {
+            if error.code == SQLITE_NOTADB {
+                try reconnect()
+            }
+            throw error
+        } catch {
+            throw error
+        }
+    }
+    
+    /// Executes the given closure inside a database transaction if not already within one.
+    ///
+    /// If the current connection is in autocommit mode, this method begins a new transaction
+    /// of the specified type, executes the closure, and then commits the transaction.
+    /// If the closure throws an error, the transaction is rolled back.
+    ///
+    /// If the connection is already inside a transaction, the closure is executed directly
+    /// without starting a new one.
+    ///
+    /// In case an `SQLiteError` with code `SQLITE_NOTADB` is thrown during transaction execution,
+    /// the connection is re-established, and the transaction is retried exactly once —
+    /// **but only if the transaction was originally started by this method**.
     ///
     /// - Parameters:
-    ///   - transaction: The transaction type to begin.
-    ///   - closure: A closure that receives the active `Connection`.
-    /// - Returns: The result of the closure.
-    /// - Throws: Any error thrown by the closure or by the transaction commands.
+    ///   - transaction: The type of SQLite transaction to begin.
+    ///   - closure: A closure that receives the active `Connection` and returns a result.
+    /// - Returns: The result returned by the closure.
+    /// - Throws: Any error thrown by the closure or transaction control statements.
     public func perform<T>(
         in transaction: SQLiteTransactionType,
-        closure: (Connection) throws -> T
+        closure: Perform<T>
     ) rethrows -> T {
         if connection.isAutocommit {
             try perform { connection in
@@ -122,7 +226,16 @@ open class DatabaseService {
                     return result
                 } catch {
                     try connection.rollbackTransaction()
-                    throw error
+                    guard let error = error as? SQLiteError,
+                          error.code == SQLITE_NOTADB
+                    else { throw error }
+                    
+                    try reconnect()
+                    
+                    try connection.beginTransaction(transaction)
+                    let result = try closure(connection)
+                    try connection.commitTransaction()
+                    return result
                 }
             }
         } else {
