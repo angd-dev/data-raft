@@ -24,7 +24,7 @@ To add DataRaft to your project, use Swift Package Manager (SPM), which is integ
 1. Open your project in Xcode.
 2. Navigate to the `File` menu and select `Add Package Dependencies`.
 3. Enter the repository URL: `https://github.com/angd-dev/data-raft.git`
-4. Choose the version to install (e.g., `0.3.0`).
+4. Choose the version to install (e.g., `0.4.0`).
 5. Add the library to your target module.
 
 ## Adding to Package.swift
@@ -38,7 +38,7 @@ import PackageDescription
 let package = Package(
     name: "YourProject",
     dependencies: [
-        .package(url: "https://github.com/angd-dev/data-raft.git", from: "0.3.0")
+        .package(url: "https://github.com/angd-dev/data-raft.git", from: "0.4.0")
     ],
     targets: [
         .target(
@@ -53,7 +53,7 @@ let package = Package(
 
 ## Additional Resources
 
-For more information and usage examples, see the [documentation](https://docs.angd.dev/?package=data-raft&version=0.3.0). You can also explore related projects like [DataLiteCore](https://github.com/angd-dev/data-lite-core) and [DataLiteCoder](https://github.com/angd-dev/data-lite-coder).
+For more information and usage examples, see the [documentation](https://docs.angd.dev/?package=data-raft&version=0.4.0). You can also explore related projects like [DataLiteCore](https://github.com/angd-dev/data-lite-core) and [DataLiteCoder](https://github.com/angd-dev/data-lite-coder).
 
 ## License
 
