@@ -55,21 +55,60 @@ open class RowDatabaseService: DatabaseService {
     
     // MARK: - Inits
     
-    /// Creates a new row-aware database service with the given connection and encoders.
+    /// Initializes a new `RowDatabaseService` instance with a connection provider,
+    /// row encoder, decoder, and an optional dispatch queue.
+    ///
+    /// This initializer allows deferred creation of the database connection via the
+    /// `provider` closure. It also lets you specify custom `RowEncoder` and `RowDecoder`
+    /// instances for serializing and deserializing model data.
     ///
     /// - Parameters:
-    ///   - connection: The database connection to use.
-    ///   - encoder: A custom `RowEncoder` to use for serialization. Defaults to a new instance.
-    ///   - decoder: A custom `RowDecoder` to use for deserialization. Defaults to a new instance.
-    ///   - queue: An optional dispatch queue for controlling access concurrency.
+    ///   - provider: A closure that returns a valid `Connection`. May throw if the connection
+    ///     cannot be established.
+    ///   - encoder: An instance of `RowEncoder` used to encode model data into SQLite rows.
+    ///     Defaults to a new `RowEncoder`.
+    ///   - decoder: An instance of `RowDecoder` used to decode SQLite rows into model data.
+    ///     Defaults to a new `RowDecoder`.
+    ///   - queue: An optional dispatch queue used for synchronizing access. If `nil`,
+    ///     a default internal serial queue is created.
+    /// - Throws: Rethrows any error thrown by the connection provider.
     public init(
+        provider: @escaping ConnectionProvider,
+        encoder: RowEncoder = RowEncoder(),
+        decoder: RowDecoder = RowDecoder(),
+        queue: DispatchQueue? = nil
+    ) rethrows {
+        self.encoder = encoder
+        self.decoder = decoder
+        try super.init(
+            provider: provider,
+            queue: queue
+        )
+    }
+
+    /// Creates a new `RowDatabaseService` instance using an existing connection,
+    /// with optional custom row encoder, decoder, and dispatch queue.
+    ///
+    /// This convenience initializer wraps the given `Connection` in a provider closure
+    /// and delegates initialization to the designated initializer.
+    ///
+    /// - Parameters:
+    ///   - connection: An existing `Connection` instance to use.
+    ///   - encoder: A custom `RowEncoder` for serialization. Defaults to a new instance.
+    ///   - decoder: A custom `RowDecoder` for deserialization. Defaults to a new instance.
+    ///   - queue: An optional dispatch queue used for synchronizing access. If `nil`,
+    ///     a default internal serial queue is created.
+    public convenience init(
         connection: Connection,
         encoder: RowEncoder = RowEncoder(),
         decoder: RowDecoder = RowDecoder(),
         queue: DispatchQueue? = nil
     ) {
-        self.encoder = encoder
-        self.decoder = decoder
-        super.init(connection: connection, queue: queue)
+        self.init(
+            provider: { connection },
+            encoder: encoder,
+            decoder: decoder,
+            queue: queue
+        )
     }
 }
