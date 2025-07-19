@@ -232,10 +232,12 @@ open class DatabaseService {
                     
                     try reconnect()
                     
-                    try connection.beginTransaction(transaction)
-                    let result = try closure(connection)
-                    try connection.commitTransaction()
-                    return result
+                    return try perform { connection in
+                        try connection.beginTransaction(transaction)
+                        let result = try closure(connection)
+                        try connection.commitTransaction()
+                        return result
+                    }
                 }
             }
         } else {
