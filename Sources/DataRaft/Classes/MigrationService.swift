@@ -3,13 +3,13 @@ import DataLiteCore
 
 /// A service responsible for managing and applying database migrations in a versioned manner.
 ///
-/// `MigrationService` allows registering and executing SQL migrations sequentially based on their
-/// version. It ensures that each migration is applied only once and in the correct order, depending
-/// on the current version of the database.
+/// `MigrationService` manages a collection of migrations identified by versions and script URLs,
+/// and applies them sequentially to update the database schema. It ensures that each migration
+/// is applied only once, and in the correct version order based on the current database version.
 ///
-/// This service is generic over a `VersionStorage` implementation, which defines how the current
-/// database version is stored and retrieved. All migration scripts must be uniquely identified by
-/// their version and script URL to prevent accidental duplication.
+/// This service is generic over a `VersionStorage` implementation that handles storing and
+/// retrieving the current database version. Migrations must have unique versions and script URLs
+/// to prevent duplication.
 ///
 /// ```swift
 /// let connection = try Connection(location: .inMemory, options: .readwrite)
@@ -26,53 +26,37 @@ import DataLiteCore
 ///
 /// ### Custom Versions and Storage
 ///
-/// You can define custom version representations and storage strategies by implementing
-/// your own `Version` and `VersionStorage` types.
+/// You can customize versioning by providing your own `Version` type conforming to
+/// ``VersionRepresentable``, which supports comparison, hashing, and identity checks.
 ///
-/// The version type must conform to ``VersionRepresentable``, which includes `Equatable`,
-/// `Comparable`, `Hashable`, and `Sendable`. This enables sorting and identity checks.
+/// The storage backend (`VersionStorage`) defines how the version is persisted, such as
+/// in a pragma, table, or metadata.
 ///
-/// The storage type must conform to ``VersionStorage`` and define how the version is persisted,
-/// such as using a table, pragma, or custom metadata.
-///
-/// For example, you can:
-///
-/// - Use a semantic version like `"1.0.0"`
-/// - Use an integer (`Int`) for simple numeric progression
-/// - Store the version in a custom table (e.g., `schema_version`)
-///
-/// This allows you to fully control both how versions are compared and where they are stored.
-public final class MigrationService<Storage: VersionStorage> {
-    /// A type representing the version of the schema, as defined by the underlying storage.
-    ///
-    /// This alias simplifies access to the version type used throughout the migration service.
-    /// The actual type is provided by the associated `Version` type of the `VersionStorage`
-    /// implementation.
+/// This allows using semantic versions, integers, or other schemes, and storing them
+/// in custom places.
+public final class MigrationService<Service: DatabaseServiceProtocol, Storage: VersionStorage> {
+    /// The version type used by this migration service, derived from the storage type.
     public typealias Version = Storage.Version
     
-    /// An error that can occur during the migration process.
+    /// Errors that may occur during migration registration or execution.
     public enum Error: Swift.Error {
-        /// Indicates that a migration with the same version or script URL was already registered.
+        /// A migration with the same version or script URL was already registered.
         case duplicateMigration(Migration<Version>)
         
-        /// Indicates that a migration failed to execute.
+        /// Migration execution failed, with optional reference to the failed migration.
         case migrationFailed(Migration<Version>?, Swift.Error)
         
-        /// Indicates that a migration script is empty.
+        /// The migration script is empty.
         case emptyMigrationScript(Migration<Version>)
     }
     
     // MARK: - Properties
     
-    private let service: DatabaseService
+    private let service: Service
     private let storage: Storage
     private var migrations = Set<Migration<Version>>()
     
-    /// A provider used to supply encryption keys for the database connection.
-    ///
-    /// This property allows delegating key management to an external object that conforms to
-    /// `DatabaseServiceKeyProvider`. When set, the key provider will be used to apply the
-    /// encryption key whenever a new connection is established or reconnected.
+    /// The encryption key provider delegated to the underlying database service.
     public weak var keyProvider: DatabaseServiceKeyProvider? {
         get { service.keyProvider }
         set { service.keyProvider = newValue }
@@ -80,33 +64,27 @@ public final class MigrationService<Storage: VersionStorage> {
     
     // MARK: - Inits
     
-    /// Creates a new instance of `MigrationService` with the given version storage and connection.
+    /// Creates a new migration service with the given database service and version storage.
     ///
     /// - Parameters:
-    ///   - storage: An instance that implements how the database version is stored and retrieved.
-    ///   - connection: A database connection used to execute migration scripts.
-    ///   - queue: An optional dispatch queue used to serialize database access.
-    ///            If `nil`, the default internal queue is used.
+    ///   - service: The database service used to perform migrations.
+    ///   - storage: The version storage implementation used to track the current schema version.
     public init(
-        storage: Storage,
-        connection: Connection,
-        queue: DispatchQueue? = nil
+        service: Service,
+        storage: Storage
     ) {
-        self.service = .init(
-            connection: connection,
-            queue: queue
-        )
+        self.service = service
         self.storage = storage
     }
     
-    // MARK: - Methods
+    // MARK: - Migration Management
     
-    /// Registers a new migration to be executed during the migration process.
+    /// Registers a new migration.
     ///
-    /// A migration must have a unique combination of version and script URL.
+    /// Ensures that no other migration with the same version or script URL has been registered.
     ///
     /// - Parameter migration: The migration to register.
-    /// - Throws: ``Error/duplicateMigration(_:)`` if the migration has already been registered.
+    /// - Throws: ``Error/duplicateMigration(_:)`` if the migration version or script URL duplicates an existing one.
     public func add(_ migration: Migration<Version>) throws {
         guard !migrations.contains(where: {
             $0.version == migration.version
@@ -117,16 +95,15 @@ public final class MigrationService<Storage: VersionStorage> {
         migrations.insert(migration)
     }
     
-    /// Applies all pending migrations in the order of ascending version.
+    /// Executes all pending migrations in ascending version order.
     ///
-    /// This method checks the current schema version using the provided storage,
-    /// selects all migrations with a higher version, and executes them in order.
-    /// If any migration fails, the process is aborted and all changes are rolled back.
+    /// This method retrieves the current schema version from the storage, filters and sorts
+    /// pending migrations, executes each migration script within a single exclusive transaction,
+    /// and updates the schema version on success.
     ///
-    /// After all migrations succeed, the final version is written to the storage.
+    /// If a migration script is empty or a migration fails, the process aborts and rolls back changes.
     ///
-    /// - Throws: ``Error/migrationFailed(_:_:)``
-    ///   if a migration fails to execute or version update fails.
+    /// - Throws: ``Error/migrationFailed(_:_:)`` if a migration script fails or if updating the version fails.
     public func migrate() throws {
         do {
             try service.perform(in: .exclusive) { connection in
