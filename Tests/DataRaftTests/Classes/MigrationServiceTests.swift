@@ -3,12 +3,15 @@ import DataLiteCore
 @testable import DataRaft
 
 @Suite struct MigrationServiceTests {
+    private typealias MigrationService = DataRaft.MigrationService<DatabaseService, VersionStorage>
+    
     private var connection: Connection!
-    private var migrationService: MigrationService<VersionStorage>!
+    private var migrationService: MigrationService!
     
     init() throws {
-        self.connection = try .init(location: .inMemory, options: .readwrite)
-        self.migrationService = .init(storage: .init(), connection: connection)
+        let connection = try Connection(location: .inMemory, options: .readwrite)
+        self.connection = connection
+        self.migrationService = .init(service: .init(connection: connection), storage: .init())
     }
     
     @Test func addMigration() throws {
@@ -22,7 +25,7 @@ import DataLiteCore
         do {
             try migrationService.add(migration3)
             Issue.record("Expected duplicateMigration error for version \(migration3.version)")
-        } catch MigrationService<VersionStorage>.Error.duplicateMigration(let migration) {
+        } catch MigrationService.Error.duplicateMigration(let migration) {
             #expect(migration == migration3)
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -52,7 +55,7 @@ import DataLiteCore
         do {
             try migrationService.migrate()
             Issue.record("Expected migrationFailed error for version \(migration3.version)")
-        } catch MigrationService<VersionStorage>.Error.migrationFailed(let migration, _) {
+        } catch MigrationService.Error.migrationFailed(let migration, _) {
             #expect(migration == migration3)
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -73,7 +76,7 @@ import DataLiteCore
         do {
             try migrationService.migrate()
             Issue.record("Expected migrationFailed error for version \(migration4.version)")
-        } catch MigrationService<VersionStorage>.Error.emptyMigrationScript(let migration) {
+        } catch MigrationService.Error.emptyMigrationScript(let migration) {
             #expect(migration == migration4)
         } catch {
             Issue.record("Unexpected error: \(error)")
