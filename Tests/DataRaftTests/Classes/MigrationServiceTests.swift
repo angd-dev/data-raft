@@ -25,7 +25,7 @@ import DataLiteCore
         do {
             try migrationService.add(migration3)
             Issue.record("Expected duplicateMigration error for version \(migration3.version)")
-        } catch MigrationService.Error.duplicateMigration(let migration) {
+        } catch MigrationService.MigrationError.duplicateMigration(let migration) {
             #expect(migration == migration3)
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -55,7 +55,7 @@ import DataLiteCore
         do {
             try migrationService.migrate()
             Issue.record("Expected migrationFailed error for version \(migration3.version)")
-        } catch MigrationService.Error.migrationFailed(let migration, _) {
+        } catch MigrationService.MigrationError.migrationFailed(let migration, _) {
             #expect(migration == migration3)
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -76,7 +76,7 @@ import DataLiteCore
         do {
             try migrationService.migrate()
             Issue.record("Expected migrationFailed error for version \(migration4.version)")
-        } catch MigrationService.Error.emptyMigrationScript(let migration) {
+        } catch MigrationService.MigrationError.emptyMigrationScript(let migration) {
             #expect(migration == migration4)
         } catch {
             Issue.record("Unexpected error: \(error)")

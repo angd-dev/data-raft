@@ -1,7 +1,7 @@
 import Foundation
 import DataLiteCore
 
-/// A service responsible for managing and applying database migrations in a versioned manner.
+/// A thread-safe service for managing and applying versioned database migrations.
 ///
 /// `MigrationService` manages a collection of migrations identified by versions and script URLs,
 /// and applies them sequentially to update the database schema. It ensures that each migration
@@ -24,7 +24,7 @@ import DataLiteCore
 /// try service.migrate()
 /// ```
 ///
-/// ### Custom Versions and Storage
+/// ## Custom Versions and Storage
 ///
 /// You can customize versioning by providing your own `Version` type conforming to
 /// ``VersionRepresentable``, which supports comparison, hashing, and identity checks.
@@ -34,26 +34,23 @@ import DataLiteCore
 ///
 /// This allows using semantic versions, integers, or other schemes, and storing them
 /// in custom places.
-public final class MigrationService<Service: DatabaseServiceProtocol, Storage: VersionStorage> {
+public final class MigrationService<
+    Service: DatabaseServiceProtocol,
+    Storage: VersionStorage
+>:
+    MigrationServiceProtocol,
+    @unchecked Sendable
+{
     /// The version type used by this migration service, derived from the storage type.
     public typealias Version = Storage.Version
     
-    /// Errors that may occur during migration registration or execution.
-    public enum Error: Swift.Error {
-        /// A migration with the same version or script URL was already registered.
-        case duplicateMigration(Migration<Version>)
-        
-        /// Migration execution failed, with optional reference to the failed migration.
-        case migrationFailed(Migration<Version>?, Swift.Error)
-        
-        /// The migration script is empty.
-        case emptyMigrationScript(Migration<Version>)
-    }
+    public typealias MigrationError = DataRaft.MigrationError<Version>
     
     // MARK: - Properties
     
     private let service: Service
     private let storage: Storage
+    private var mutex = pthread_mutex_t()
     private var migrations = Set<Migration<Version>>()
     
     /// The encryption key provider delegated to the underlying database service.
@@ -75,6 +72,11 @@ public final class MigrationService<Service: DatabaseServiceProtocol, Storage: V
     ) {
         self.service = service
         self.storage = storage
+        pthread_mutex_init(&mutex, nil)
+    }
+    
+    deinit {
+        pthread_mutex_destroy(&mutex)
     }
     
     // MARK: - Migration Management
@@ -84,13 +86,18 @@ public final class MigrationService<Service: DatabaseServiceProtocol, Storage: V
     /// Ensures that no other migration with the same version or script URL has been registered.
     ///
     /// - Parameter migration: The migration to register.
-    /// - Throws: ``Error/duplicateMigration(_:)`` if the migration version or script URL duplicates an existing one.
-    public func add(_ migration: Migration<Version>) throws {
+    /// - Throws: ``MigrationError/duplicateMigration(_:)``
+    ///   if the migration version or script URL duplicates an existing one.
+    public func add(_ migration: Migration<Version>) throws(MigrationError) {
+        pthread_mutex_lock(&mutex)
+        defer {
+            pthread_mutex_unlock(&mutex)
+        }
         guard !migrations.contains(where: {
             $0.version == migration.version
             || $0.scriptURL == migration.scriptURL
         }) else {
-            throw Error.duplicateMigration(migration)
+            throw MigrationError.duplicateMigration(migration)
         }
         migrations.insert(migration)
     }
@@ -103,8 +110,15 @@ public final class MigrationService<Service: DatabaseServiceProtocol, Storage: V
     ///
     /// If a migration script is empty or a migration fails, the process aborts and rolls back changes.
     ///
-    /// - Throws: ``Error/migrationFailed(_:_:)`` if a migration script fails or if updating the version fails.
-    public func migrate() throws {
+    /// - Throws: ``MigrationError/migrationFailed(_:_:)``
+    ///   if a migration script fails or if updating the version fails.
+    /// - Throws: ``MigrationError/emptyMigrationScript(_:)``
+    ///   if a migration script is empty.
+    public func migrate() throws(MigrationError) {
+        pthread_mutex_lock(&mutex)
+        defer {
+            pthread_mutex_unlock(&mutex)
+        }
         do {
             try service.perform(in: .exclusive) { connection in
                 try storage.prepare(connection)
@@ -116,12 +130,12 @@ public final class MigrationService<Service: DatabaseServiceProtocol, Storage: V
                 for migration in migrations {
                     let script = try migration.script
                     guard !script.isEmpty else {
-                        throw Error.emptyMigrationScript(migration)
+                        throw MigrationError.emptyMigrationScript(migration)
                     }
                     do {
                         try connection.execute(sql: script)
                     } catch {
-                        throw Error.migrationFailed(migration, error)
+                        throw MigrationError.migrationFailed(migration, error)
                     }
                 }
                 
@@ -129,10 +143,10 @@ public final class MigrationService<Service: DatabaseServiceProtocol, Storage: V
                     try storage.setVersion(connection, version)
                 }
             }
-        } catch let error as Error {
+        } catch let error as MigrationError {
             throw error
         } catch {
-            throw Error.migrationFailed(nil, error)
+            throw MigrationError.migrationFailed(nil, error)
         }
     }
 }
