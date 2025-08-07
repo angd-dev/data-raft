@@ -1,110 +1,113 @@
 import Foundation
 import DataLiteCore
 
-/// A service responsible for managing and applying database migrations in a versioned manner.
+/// Thread-safe service for executing ordered database schema migrations.
 ///
-/// `MigrationService` manages a collection of migrations identified by versions and script URLs,
-/// and applies them sequentially to update the database schema. It ensures that each migration
-/// is applied only once, and in the correct version order based on the current database version.
+/// `MigrationService` stores registered migrations and applies them sequentially
+/// to update the database schema. Each migration runs only once, in version order,
+/// based on the current schema version stored in the database.
 ///
-/// This service is generic over a `VersionStorage` implementation that handles storing and
-/// retrieving the current database version. Migrations must have unique versions and script URLs
-/// to prevent duplication.
+/// The service is generic over:
+/// - `Service`: a database service conforming to ``DatabaseServiceProtocol``
+/// - `Storage`: a version storage conforming to ``VersionStorage``
+///
+/// Migrations are identified by version and script URL. Both must be unique
+/// across all registered migrations.
+///
+/// Execution is performed inside a single `.exclusive` transaction, ensuring
+/// that either all pending migrations are applied successfully or none are.
+/// On error, the database state is rolled back to the original version.
+///
+/// This type is safe to use from multiple threads.
 ///
 /// ```swift
 /// let connection = try Connection(location: .inMemory, options: .readwrite)
 /// let storage = UserVersionStorage<BitPackVersion>()
-/// let service = MigrationService(storage: storage, connection: connection)
+/// let service = MigrationService(service: connectionService, storage: storage)
 ///
 /// try service.add(Migration(version: "1.0.0", byResource: "v_1_0_0.sql")!)
 /// try service.add(Migration(version: "1.0.1", byResource: "v_1_0_1.sql")!)
-/// try service.add(Migration(version: "1.1.0", byResource: "v_1_1_0.sql")!)
-/// try service.add(Migration(version: "1.2.0", byResource: "v_1_2_0.sql")!)
-///
 /// try service.migrate()
 /// ```
 ///
 /// ### Custom Versions and Storage
 ///
-/// You can customize versioning by providing your own `Version` type conforming to
-/// ``VersionRepresentable``, which supports comparison, hashing, and identity checks.
-///
-/// The storage backend (`VersionStorage`) defines how the version is persisted, such as
-/// in a pragma, table, or metadata.
-///
-/// This allows using semantic versions, integers, or other schemes, and storing them
-/// in custom places.
-public final class MigrationService<Service: DatabaseServiceProtocol, Storage: VersionStorage> {
-    /// The version type used by this migration service, derived from the storage type.
+/// You can supply a custom `Version` type conforming to ``VersionRepresentable``
+/// and a `VersionStorage` implementation that determines how and where the
+/// version is persisted (e.g., `PRAGMA user_version`, metadata table, etc.).
+public final class MigrationService<
+    Service: DatabaseServiceProtocol,
+    Storage: VersionStorage
+>:
+    MigrationServiceProtocol,
+    @unchecked Sendable
+{
+    /// Schema version type used for migration ordering.
     public typealias Version = Storage.Version
-    
-    /// Errors that may occur during migration registration or execution.
-    public enum Error: Swift.Error {
-        /// A migration with the same version or script URL was already registered.
-        case duplicateMigration(Migration<Version>)
-        
-        /// Migration execution failed, with optional reference to the failed migration.
-        case migrationFailed(Migration<Version>?, Swift.Error)
-        
-        /// The migration script is empty.
-        case emptyMigrationScript(Migration<Version>)
-    }
-    
-    // MARK: - Properties
     
     private let service: Service
     private let storage: Storage
+    private var mutex = pthread_mutex_t()
     private var migrations = Set<Migration<Version>>()
     
-    /// The encryption key provider delegated to the underlying database service.
+    /// Encryption key provider delegated to the underlying database service.
     public weak var keyProvider: DatabaseServiceKeyProvider? {
         get { service.keyProvider }
         set { service.keyProvider = newValue }
     }
     
-    // MARK: - Inits
-    
-    /// Creates a new migration service with the given database service and version storage.
+    /// Creates a migration service with the given database service and storage.
     ///
     /// - Parameters:
-    ///   - service: The database service used to perform migrations.
-    ///   - storage: The version storage implementation used to track the current schema version.
+    ///   - service: Database service used to execute migrations.
+    ///   - storage: Version storage for reading and writing schema version.
     public init(
         service: Service,
         storage: Storage
     ) {
         self.service = service
         self.storage = storage
+        pthread_mutex_init(&mutex, nil)
     }
     
-    // MARK: - Migration Management
+    deinit {
+        pthread_mutex_destroy(&mutex)
+    }
     
-    /// Registers a new migration.
-    ///
-    /// Ensures that no other migration with the same version or script URL has been registered.
+    /// Registers a new migration, ensuring version and script URL uniqueness.
     ///
     /// - Parameter migration: The migration to register.
-    /// - Throws: ``Error/duplicateMigration(_:)`` if the migration version or script URL duplicates an existing one.
-    public func add(_ migration: Migration<Version>) throws {
+    /// - Throws: ``MigrationError/duplicateMigration(_:)`` if the migration's
+    ///   version or script URL is already registered.
+    public func add(_ migration: Migration<Version>) throws(MigrationError<Version>) {
+        pthread_mutex_lock(&mutex)
+        defer { pthread_mutex_unlock(&mutex) }
         guard !migrations.contains(where: {
             $0.version == migration.version
             || $0.scriptURL == migration.scriptURL
         }) else {
-            throw Error.duplicateMigration(migration)
+            throw .duplicateMigration(migration)
         }
         migrations.insert(migration)
     }
     
-    /// Executes all pending migrations in ascending version order.
+    /// Executes all pending migrations inside a single exclusive transaction.
     ///
-    /// This method retrieves the current schema version from the storage, filters and sorts
-    /// pending migrations, executes each migration script within a single exclusive transaction,
-    /// and updates the schema version on success.
+    /// This method retrieves the current schema version from storage, then determines
+    /// which migrations have a higher version. The selected migrations are sorted in
+    /// ascending order and each one's SQL script is executed in sequence. When all
+    /// scripts complete successfully, the stored version is updated to the highest
+    /// applied migration.
     ///
-    /// If a migration script is empty or a migration fails, the process aborts and rolls back changes.
+    /// If a script is empty or execution fails, the process aborts and the transaction
+    /// is rolled back, leaving the database unchanged.
     ///
-    /// - Throws: ``Error/migrationFailed(_:_:)`` if a migration script fails or if updating the version fails.
-    public func migrate() throws {
+    /// - Throws: ``MigrationError/emptyMigrationScript(_:)`` if a script is empty.
+    /// - Throws: ``MigrationError/migrationFailed(_:_:)`` if execution or version
+    ///   update fails.
+    public func migrate() throws(MigrationError<Version>) {
+        pthread_mutex_lock(&mutex)
+        defer { pthread_mutex_unlock(&mutex) }
         do {
             try service.perform(in: .exclusive) { connection in
                 try storage.prepare(connection)
@@ -116,12 +119,12 @@ public final class MigrationService<Service: DatabaseServiceProtocol, Storage: V
                 for migration in migrations {
                     let script = try migration.script
                     guard !script.isEmpty else {
-                        throw Error.emptyMigrationScript(migration)
+                        throw MigrationError.emptyMigrationScript(migration)
                     }
                     do {
                         try connection.execute(sql: script)
                     } catch {
-                        throw Error.migrationFailed(migration, error)
+                        throw MigrationError.migrationFailed(migration, error)
                     }
                 }
                 
@@ -129,10 +132,10 @@ public final class MigrationService<Service: DatabaseServiceProtocol, Storage: V
                     try storage.setVersion(connection, version)
                 }
             }
-        } catch let error as Error {
+        } catch let error as MigrationError<Version> {
             throw error
         } catch {
-            throw Error.migrationFailed(nil, error)
+            throw .migrationFailed(nil, error)
         }
     }
 }

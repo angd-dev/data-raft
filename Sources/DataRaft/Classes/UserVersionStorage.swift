@@ -13,7 +13,7 @@ import DataLiteCore
 /// defined by the application.
 public final class UserVersionStorage<
     Version: VersionRepresentable & RawRepresentable
->: VersionStorage where Version.RawValue == UInt32 {
+>: Sendable, VersionStorage where Version.RawValue == UInt32 {
     /// Errors related to reading or decoding the version.
     public enum Error: Swift.Error {
         /// The stored `user_version` could not be decoded into a valid `Version` case.
