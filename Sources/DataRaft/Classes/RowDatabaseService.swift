@@ -44,7 +44,11 @@ import DataLiteCoder
 /// `RowDatabaseService` encourages a reusable, type-safe pattern for
 /// model-based interaction with SQLite while preserving thread safety
 /// and transactional integrity.
-open class RowDatabaseService: DatabaseService, RowDatabaseServiceProtocol {
+open class RowDatabaseService:
+    DatabaseService,
+    RowDatabaseServiceProtocol,
+    @unchecked Sendable
+{
     // MARK: - Properties
     
     /// The encoder used to serialize values into row representations.

@@ -4,6 +4,7 @@ import DataLiteCore
 
 @Suite struct MigrationServiceTests {
     private typealias MigrationService = DataRaft.MigrationService<DatabaseService, VersionStorage>
+    private typealias MigrationError = DataRaft.MigrationError<MigrationService.Version>
     
     private var connection: Connection!
     private var migrationService: MigrationService!
@@ -25,25 +26,25 @@ import DataLiteCore
         do {
             try migrationService.add(migration3)
             Issue.record("Expected duplicateMigration error for version \(migration3.version)")
-        } catch MigrationService.Error.duplicateMigration(let migration) {
+        } catch MigrationError.duplicateMigration(let migration) {
             #expect(migration == migration3)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
     }
     
-    @Test func migrate() throws {
+    @Test func migrate() async throws {
         let migration1 = Migration<Int32>(version: 1, byResource: "migration_1", extension: "sql", in: .module)!
         let migration2 = Migration<Int32>(version: 2, byResource: "migration_2", extension: "sql", in: .module)!
         
         try migrationService.add(migration1)
         try migrationService.add(migration2)
-        try migrationService.migrate()
+        try await migrationService.migrate()
         
         #expect(connection.userVersion == 2)
     }
     
-    @Test func migrateWithError() throws {
+    @Test func migrateError() async throws {
         let migration1 = Migration<Int32>(version: 1, byResource: "migration_1", extension: "sql", in: .module)!
         let migration2 = Migration<Int32>(version: 2, byResource: "migration_2", extension: "sql", in: .module)!
         let migration3 = Migration<Int32>(version: 3, byResource: "migration_3", extension: "sql", in: .module)!
@@ -53,9 +54,9 @@ import DataLiteCore
         try migrationService.add(migration3)
         
         do {
-            try migrationService.migrate()
+            try await migrationService.migrate()
             Issue.record("Expected migrationFailed error for version \(migration3.version)")
-        } catch MigrationService.Error.migrationFailed(let migration, _) {
+        } catch MigrationError.migrationFailed(let migration, _) {
             #expect(migration == migration3)
         } catch {
             Issue.record("Unexpected error: \(error)")
@@ -64,7 +65,7 @@ import DataLiteCore
         #expect(connection.userVersion == 0)
     }
     
-    @Test func migrateWithEmptyMigration() throws {
+    @Test func migrateEmpty() async throws {
         let migration1 = Migration<Int32>(version: 1, byResource: "migration_1", extension: "sql", in: .module)!
         let migration2 = Migration<Int32>(version: 2, byResource: "migration_2", extension: "sql", in: .module)!
         let migration4 = Migration<Int32>(version: 4, byResource: "migration_4", extension: "sql", in: .module)!
@@ -74,9 +75,9 @@ import DataLiteCore
         try migrationService.add(migration4)
         
         do {
-            try migrationService.migrate()
+            try await migrationService.migrate()
             Issue.record("Expected migrationFailed error for version \(migration4.version)")
-        } catch MigrationService.Error.emptyMigrationScript(let migration) {
+        } catch MigrationError.emptyMigrationScript(let migration) {
             #expect(migration == migration4)
         } catch {
             Issue.record("Unexpected error: \(error)")

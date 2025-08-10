@@ -54,8 +54,12 @@ class DatabaseServiceTests: DatabaseServiceKeyProvider {
         try? FileManager.default.removeItem(at: fileURL)
     }
     
-    func databaseServiceKey(_ service: DatabaseService) throws -> Connection.Key {
+    func databaseServiceKey(_ service: DatabaseService) throws -> Connection.Key? {
         currentKey
+    }
+    
+    func databaseServiceShouldReconnect(_ service: DatabaseService) -> Bool {
+        true
     }
 }
 
