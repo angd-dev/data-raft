@@ -2,15 +2,17 @@ import Foundation
 import DataLiteCore
 import DataLiteC
 
-/// A base class for services that operate on a database connection.
+/// Base service for working with a database.
 ///
-/// `DatabaseService` provides a shared interface for executing operations on a `Connection`,
-/// with support for transaction handling and optional request serialization.
+/// `DatabaseService` provides a unified interface for performing operations
+/// using a database connection, with built-in support for transactions,
+/// reconnection, and optional encryption key management.
 ///
-/// Subclasses can use this base to coordinate safe, synchronous access to the database
-/// without duplicating concurrency or transaction logic.
+/// The service ensures thread-safe execution by serializing access to the
+/// connection through an internal queue. This enables building modular and safe
+/// data access layers without duplicating low-level logic.
 ///
-/// For example, you can define a custom service for managing notes:
+/// Below is an example of creating a service for managing notes:
 ///
 /// ```swift
 /// final class NoteService: DatabaseService {
@@ -46,59 +48,40 @@ import DataLiteC
 /// print(notes) // ["Hello, world!"]
 /// ```
 ///
-/// This approach allows you to build reusable service layers on top of a safe, transactional,
-/// and serialized foundation.
-///
 /// ## Error Handling
 ///
-/// All database access is serialized using an internal dispatch queue to ensure thread safety.
-/// If a database corruption or decryption failure is detected (e.g., `SQLITE_NOTADB`), the
-/// service attempts to re-establish the connection and, in case of transaction blocks,
-/// retries the entire transaction block exactly once. If the problem persists, the error
-/// is rethrown.
+/// All operations are executed on an internal serial queue, ensuring thread safety.
+/// If an encryption error (`SQLITE_NOTADB`) is detected, the service may reopen the
+/// connection and retry the transactional block exactly once. If the error occurs again,
+/// it is propagated without further retries.
 ///
 /// ## Encryption Key Management
 ///
-/// If a `keyProvider` is set, the service will use it to retrieve and apply encryption keys
-/// when establishing or re-establishing a database connection. Any error that occurs while
-/// retrieving or applying the encryption key is reported to the provider via
-/// `databaseService(_:didReceive:)`. Non-encryption-related errors (e.g., file access
-/// issues) are not reported to the provider.
+/// If a ``keyProvider`` is set, the service uses it to obtain and apply an encryption
+/// key when creating or restoring a connection. If an error occurs while obtaining
+/// or applying the key, the provider is notified through
+/// ``DatabaseServiceKeyProvider/databaseService(_:didReceive:)``.
 ///
-/// ## Reconnect Behavior
+/// ## Reconnection
 ///
-/// The service can automatically reconnect to the database, but this happens only in very specific
-/// circumstances. Reconnection is triggered only when you run a transactional operation using
-/// ``perform(in:closure:)``, and a decryption error (`SQLITE_NOTADB`) occurs during
-/// the transaction. Even then, reconnection is possible only if you have set a ``keyProvider``,
-/// and only if the provider allows it by returning `true` from its
-/// ``DatabaseServiceKeyProvider/databaseServiceShouldReconnect(_:)-84qfz``
-/// method.
-///
-/// When this happens, the service will ask the key provider for a new encryption key, create a new
-/// database connection, and then try to re-run your transaction block one more time. If the second
-/// attempt also fails with the same decryption error, or if reconnection is not allowed, the error is
-/// returned to your code as usual, and no further attempts are made.
-///
-/// It's important to note that reconnection and retrying of transactions never happens outside of
-/// transactional operations, and will never be triggered for other types of errors. All of this logic
-/// runs on the service’s internal queue, so you don’t have to worry about thread safety.
-///
-/// - Important: Because a transaction block can be executed more than once when this
-///   mechanism is triggered, make sure that your block is idempotent and doesn't cause any
-///   side effects outside the database itself.
+/// Automatic reconnection is available only during transactional blocks executed with
+/// ``perform(in:closure:)``. If a decryption error (`SQLITE_NOTADB`) occurs during
+/// a transaction and the provider allows reconnection, the service obtains a new key,
+/// creates a new connection, and retries the block once. If the second attempt fails
+/// or reconnection is disallowed, the error is propagated without further retries.
 ///
 /// ## Topics
 ///
 /// ### Initializers
 ///
-/// - ``init(provider:queue:)``
-/// - ``init(connection:queue:)``
+/// - ``init(provider:keyProvider:queue:)``
+/// - ``init(connection:keyProvider:queue:)``
 ///
 /// ### Key Management
 ///
 /// - ``DatabaseServiceKeyProvider``
 /// - ``keyProvider``
+/// - ``applyKeyProvider()``
 ///
 /// ### Connection Management
 ///
@@ -111,14 +94,14 @@ import DataLiteC
 /// - ``perform(_:)``
 /// - ``perform(in:closure:)``
 open class DatabaseService: DatabaseServiceProtocol, @unchecked Sendable {
-    /// A closure that provides a new database connection when invoked.
+    /// A closure that creates a new database connection.
     ///
-    /// `ConnectionProvider` is used to defer the creation of a `Connection` instance
-    /// until it is actually needed. It can throw errors if the connection cannot be
-    /// established or configured correctly.
+    /// `ConnectionProvider` is used for deferred connection creation.
+    /// It allows encapsulating initialization logic, configuration, and
+    /// error handling when opening the database.
     ///
-    /// - Returns: A valid `Connection` instance.
-    /// - Throws: Any error encountered while opening or configuring the connection.
+    /// - Returns: An initialized `Connection` instance.
+    /// - Throws: An error if the connection cannot be created or configured.
     public typealias ConnectionProvider = () throws -> Connection
     
     // MARK: - Properties
@@ -128,91 +111,96 @@ open class DatabaseService: DatabaseServiceProtocol, @unchecked Sendable {
     private let queueKey = DispatchSpecificKey<Void>()
     private var connection: Connection
     
-    /// Provides the encryption key for the database connection.
+    /// Encryption key provider.
     ///
-    /// When this property is set, the service synchronously retrieves and applies an encryption
-    /// key from the provider to the current database connection on the service’s internal queue,
-    /// ensuring thread safety.
-    ///
-    /// If an error occurs during key retrieval or application (for example, if biometric
-    /// authentication is cancelled, the key is unavailable, or decryption fails due to an
-    /// incorrect key), the service notifies the provider by calling
-    /// ``DatabaseServiceKeyProvider/databaseService(_:didReceive:)-xbrk``.
-    ///
-    /// This mechanism enables external management of encryption keys, supporting scenarios such
-    /// as key rotation, user-specific encryption, or custom error handling.
-    public weak var keyProvider: DatabaseServiceKeyProvider? {
-        didSet {
-            withConnection { connection in
-                try? applyKey(to: connection)
-            }
-        }
-    }
+    /// Used to obtain and apply a key when creating or restoring a connection.
+    public weak var keyProvider: DatabaseServiceKeyProvider?
     
     // MARK: - Inits
     
-    /// Creates a new `DatabaseService` with the specified connection provider and dispatch queue.
+    /// Creates a new database service.
     ///
-    /// This initializer immediately invokes the `provider` closure to establish the initial database
-    /// connection. An internal serial queue is created for synchronizing database access. If a
-    /// `queue` is provided, it is set as the target of the internal queue, allowing you to control
-    /// scheduling and quality of service.
+    /// Calls `provider` to create the initial connection and configures
+    /// the internal serial queue for thread-safe access to the database.
+    ///
+    /// The internal queue is always created with QoS `.utility`. If the `queue`
+    /// parameter is provided, it is used as the target queue for the internal one.
+    ///
+    /// If a `keyProvider` is set, the encryption key is applied immediately
+    /// after the initial connection is created.
     ///
     /// - Parameters:
-    ///   - provider: A closure that returns a new `Connection` instance. May throw on failure.
-    ///   - queue: An optional dispatch queue to target for internal serialization. If `nil`,
-    ///     a dedicated serial queue with `.utility` QoS is created.
-    /// - Throws: Any error thrown by the `provider` during initial connection setup.
+    ///   - provider: A closure that returns a new connection.
+    ///   - keyProvider: An optional encryption key provider.
+    ///   - queue: An optional target queue for the internal one.
+    /// - Throws: An error if the connection cannot be created or configured.
     public init(
         provider: @escaping ConnectionProvider,
+        keyProvider: DatabaseServiceKeyProvider? = nil,
         queue: DispatchQueue? = nil
-    ) rethrows {
+    ) throws {
         self.provider = provider
+        self.keyProvider = keyProvider
         self.connection = try provider()
         self.queue = .init(for: Self.self, qos: .utility)
         self.queue.setSpecific(key: queueKey, value: ())
         if let queue = queue {
             self.queue.setTarget(queue: queue)
         }
+        if self.keyProvider != nil {
+            try applyKey(to: self.connection)
+        }
     }
     
-    /// Creates a new `DatabaseService` using the given connection provider and optional queue.
-    ///
-    /// This convenience initializer wraps the provided autoclosure in a `ConnectionProvider`
-    /// and delegates to the designated initializer. It is useful when passing a simple
-    /// connection expression.
+    /// Creates a new database service.
     ///
     /// - Parameters:
-    ///   - provider: A closure that returns a `Connection` instance and may throw.
-    ///   - queue: An optional dispatch queue used as a target for internal serialization. If `nil`,
-    ///     a default serial queue with `.utility` QoS is created internally.
-    /// - Throws: Rethrows any error thrown by the connection provider.
+    ///   - provider: An expression that creates a new connection.
+    ///   - keyProvider: An optional encryption key provider.
+    ///   - queue: An optional target queue for the internal one.
+    /// - Throws: An error if the connection cannot be created or configured.
     public convenience init(
         connection provider: @escaping @autoclosure ConnectionProvider,
+        keyProvider: DatabaseServiceKeyProvider? = nil,
         queue: DispatchQueue? = nil
-    ) rethrows {
-        try self.init(provider: provider, queue: queue)
+    ) throws {
+        try self.init(provider: provider, keyProvider: keyProvider, queue: queue)
     }
     
     // MARK: - Methods
     
-    /// Re-establishes the database connection using the stored connection provider.
+    /// Applies the encryption key from `keyProvider` to the current connection.
     ///
-    /// This method synchronously creates a new ``Connection`` instance by invoking the original
-    /// provider on the service’s internal queue. If a ``keyProvider`` is set, the service attempts
-    /// to retrieve and apply an encryption key to the new connection.
-    /// If any error occurs during key retrieval or application, the provider is notified via
-    /// ``DatabaseServiceKeyProvider/databaseService(_:didReceive:)-xbrk``,
-    /// and the error is rethrown.
+    /// The method executes synchronously on the internal queue. If the key provider
+    /// is missing, the method does nothing. If the key has already been successfully
+    /// applied, subsequent calls have no effect. To apply a new key, use ``reconnect()``.
     ///
-    /// The new connection replaces the existing one only if all steps succeed without errors.
+    /// If an error occurs while obtaining or applying the key, it is thrown further
+    /// and also reported to the provider via
+    /// ``DatabaseServiceKeyProvider/databaseService(_:didReceive:)``.
     ///
-    /// This operation is always executed on the internal dispatch queue (see ``perform(_:)``)
-    /// to ensure thread safety.
+    /// - Throws: An error while obtaining or applying the key.
+    final public func applyKeyProvider() throws {
+        try withConnection { connection in
+            try applyKey(to: connection)
+        }
+    }
+    
+    /// Establishes a new database connection.
     ///
-    /// - Throws: Any error thrown during connection creation or while retrieving or applying
-    ///   the encryption key. Only encryption-related errors are reported to the ``keyProvider``.
-    public func reconnect() throws {
+    /// Creates a new `Connection` using the stored connection provider and,
+    /// if a ``keyProvider`` is set, applies the encryption key. The new connection
+    /// replaces the previous one only if it is successfully created and configured.
+    ///
+    /// If an error occurs while obtaining or applying the key, it is thrown further
+    /// and also reported to the provider via
+    /// ``DatabaseServiceKeyProvider/databaseService(_:didReceive:)``.
+    ///
+    /// Executed synchronously on the internal queue, ensuring thread safety.
+    ///
+    /// - Throws: An error if the connection cannot be created or the key cannot
+    ///   be obtained/applied.
+    final public func reconnect() throws {
         try withConnection { _ in
             let connection = try provider()
             try applyKey(to: connection)
@@ -220,39 +208,39 @@ open class DatabaseService: DatabaseServiceProtocol, @unchecked Sendable {
         }
     }
     
-    /// Executes the given closure using the active database connection.
+    /// Executes a closure with the active connection.
     ///
-    /// Ensures thread-safe access to the underlying ``Connection`` by synchronizing execution on
-    /// the service’s internal serial dispatch queue. If the call is already running on this queue,
-    /// the closure is executed directly to avoid unnecessary dispatching.
+    /// Runs the `closure` on the internal serial queue, ensuring
+    /// thread-safe access to the `Connection`.
     ///
-    /// - Parameter closure: A closure that takes the active connection and returns a result.
+    /// - Parameter closure: A closure that takes the active connection.
     /// - Returns: The value returned by the closure.
     /// - Throws: Any error thrown by the closure.
-    public func perform<T>(_ closure: Perform<T>) rethrows -> T {
+    final public func perform<T>(_ closure: Perform<T>) rethrows -> T {
         try withConnection(closure)
     }
     
     /// Executes a closure inside a transaction if the connection is in autocommit mode.
     ///
-    /// If the connection is in autocommit mode, starts a new transaction of the specified type,
-    /// executes the closure within it, and commits the transaction on success. If the closure
-    /// throws, the transaction is rolled back.
+    /// If the connection is in autocommit mode, starts a new transaction of the
+    /// specified type, executes the closure, and commits changes on success.
+    /// If the closure throws an error, the transaction is rolled back.
     ///
-    /// If the closure throws a `Connection.Error` with code `SQLITE_NOTADB` and reconnecting is
-    /// allowed, the service attempts to reconnect and retries the entire transaction block once.
+    /// If the closure throws `Connection.Error` with code `SQLITE_NOTADB`
+    /// and reconnection is allowed, the service attempts to reconnect and retries
+    /// the transaction block once.
     ///
-    /// If already inside a transaction (not in autocommit mode), executes the closure directly
-    /// without starting a new transaction.
+    /// If a transaction is already active (connection not in autocommit mode),
+    /// the closure is executed directly without starting a new transaction.
     ///
     /// - Parameters:
-    ///   - transaction: The type of transaction to begin.
+    ///   - transaction: The type of transaction to start.
     ///   - closure: A closure that takes the active connection and returns a result.
     /// - Returns: The value returned by the closure.
-    /// - Throws: Any error thrown by the closure, transaction control statements, or reconnect logic.
-    ///
+    /// - Throws: Any error thrown by the closure, transaction management, or
+    ///   reconnection logic.
     /// - Important: The closure may be executed more than once. Ensure it is idempotent.
-    public func perform<T>(
+    final public func perform<T>(
         in transaction: TransactionType,
         closure: Perform<T>
     ) rethrows -> T {
@@ -291,9 +279,11 @@ open class DatabaseService: DatabaseServiceProtocol, @unchecked Sendable {
     }
 }
 
+// MARK: - Private
+
 private extension DatabaseService {
     var shouldReconnect: Bool {
-        keyProvider?.databaseServiceShouldReconnect(self) ?? false
+        keyProvider?.databaseService(shouldReconnect: self) ?? false
     }
     
     func withConnection<T>(_ closure: Perform<T>) rethrows -> T {
@@ -304,14 +294,15 @@ private extension DatabaseService {
     }
     
     func applyKey(to connection: Connection) throws {
+        guard let keyProvider = keyProvider else { return }
         do {
-            if let key = try keyProvider?.databaseServiceKey(self) {
+            if let key = try keyProvider.databaseService(keyFor: self) {
                 let sql = "SELECT count(*) FROM sqlite_master"
                 try connection.apply(key)
                 try connection.execute(raw: sql)
             }
         } catch {
-            keyProvider?.databaseService(self, didReceive: error)
+            keyProvider.databaseService(self, didReceive: error)
             throw error
         }
     }
