@@ -4,7 +4,7 @@ import DataLiteC
 import DataLiteCore
 import DataRaft
 
-class DatabaseServiceTests: DatabaseServiceKeyProvider {
+class DatabaseServiceTests: DatabaseServiceKeyProvider, @unchecked Sendable {
     private let keyOne = Connection.Key.rawKey(Data([
         0xe8, 0xd7, 0x92, 0xa2, 0xa1, 0x35, 0x56, 0xc0,
         0xfd, 0xbb, 0x2f, 0x91, 0xe8, 0x0b, 0x4b, 0x2a,
@@ -40,6 +40,7 @@ class DatabaseServiceTests: DatabaseServiceKeyProvider {
         self.service = service
         self.service.keyProvider = self
         
+        try self.service.applyKeyProvider()
         try self.service.perform { connection in
             try connection.execute(sql: """
             CREATE TABLE IF NOT EXISTS Item (
@@ -54,11 +55,11 @@ class DatabaseServiceTests: DatabaseServiceKeyProvider {
         try? FileManager.default.removeItem(at: fileURL)
     }
     
-    func databaseServiceKey(_ service: DatabaseService) throws -> Connection.Key? {
+    func databaseService(keyFor service: any DatabaseServiceProtocol) throws -> Connection.Key? {
         currentKey
     }
     
-    func databaseServiceShouldReconnect(_ service: DatabaseService) -> Bool {
+    func databaseService(shouldReconnect service: any DatabaseServiceProtocol) -> Bool {
         true
     }
 }

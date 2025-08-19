@@ -74,6 +74,16 @@ public final class MigrationService<
         pthread_mutex_destroy(&mutex)
     }
     
+    /// Applies settings to the active database connection.
+    public func applyKeyProvider() throws {
+        try service.applyKeyProvider()
+    }
+    
+    /// Recreates the database connection.
+    public func reconnect() throws {
+        try service.reconnect()
+    }
+    
     /// Registers a new migration, ensuring version and script URL uniqueness.
     ///
     /// - Parameter migration: The migration to register.

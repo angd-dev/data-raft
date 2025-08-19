@@ -1,14 +1,15 @@
 import Foundation
 import DataLiteCore
 
-/// A protocol that defines a common interface for working with a database connection.
+/// A protocol for a database service.
 ///
-/// `DatabaseServiceProtocol` abstracts the core operations required to safely interact with a
-/// SQLite-compatible database. Conforming types provide thread-safe execution of closures with a live
-/// `Connection`, optional transaction support, reconnection logic, and pluggable encryption key
-/// management via a ``DatabaseServiceKeyProvider``.
+/// `DatabaseServiceProtocol` defines the core capabilities required for
+/// reliable interaction with a database. Conforming implementations provide
+/// execution of client closures with a live connection, transaction wrapping,
+/// reconnection logic, and flexible encryption key management.
 ///
-/// This protocol forms the foundation for safe, modular service layers on top of a database.
+/// This enables building safe and extensible service layers on top of
+/// a database.
 ///
 /// ## Topics
 ///
@@ -16,6 +17,7 @@ import DataLiteCore
 ///
 /// - ``DatabaseServiceKeyProvider``
 /// - ``keyProvider``
+/// - ``applyKeyProvider()``
 ///
 /// ### Connection Management
 ///
@@ -26,63 +28,63 @@ import DataLiteCore
 /// - ``Perform``
 /// - ``perform(_:)``
 /// - ``perform(in:closure:)``
-public protocol DatabaseServiceProtocol: AnyObject {
-    /// A closure that performs a database operation using an active connection.
+public protocol DatabaseServiceProtocol: AnyObject, Sendable {
+    /// A closure executed with an active database connection.
     ///
-    /// The `Perform<T>` type alias defines a closure signature for a database operation that
-    /// receives a live `Connection` and returns a value or throws an error. This enables
-    /// callers to express discrete, atomic database operations for execution via
-    /// ``perform(_:)`` or ``perform(in:closure:)``.
+    /// Used by the service to safely provide access to `Connection`
+    /// within the appropriate execution context.
     ///
     /// - Parameter connection: The active database connection.
-    /// - Returns: The result of the operation.
-    /// - Throws: Any error thrown during execution of the operation.
+    /// - Returns: The value returned by the closure.
+    /// - Throws: An error if the closure execution fails.
     typealias Perform<T> = (Connection) throws -> T
     
-    /// The object responsible for providing encryption keys for the database connection.
+    /// The encryption key provider for the database service.
     ///
-    /// When assigned, the key provider will be queried for a key and applied to the current
-    /// connection, if available. If key retrieval or application fails, the error is reported
-    /// via `databaseService(_:didReceive:)` and not thrown from the setter.
-    ///
-    /// - Important: Setting this property does not guarantee that the connection becomes available;
-    ///   error handling is asynchronous via callback.
+    /// Enables external management of encryption keys.
+    /// When set, the service can request a key when establishing or
+    /// restoring a connection, and can also notify about errors
+    /// encountered while applying a key.
     var keyProvider: DatabaseServiceKeyProvider? { get set }
     
-    /// Re-establishes the database connection using the stored provider.
+    /// Applies the encryption key from the current provider.
     ///
-    /// If a `keyProvider` is set, the method attempts to retrieve and apply a key
-    /// to the new connection. All errors encountered during connection creation or
-    /// key application are thrown. If an error occurs that is related to encryption key
-    /// retrieval or application, it is also reported to the `DatabaseServiceKeyProvider`
-    /// via its `databaseService(_:didReceive:)` callback.
+    /// Calls the configured ``keyProvider`` to obtain a key and applies
+    /// it to the active connection. If the key is unavailable or an
+    /// error occurs while applying it, the method throws.
     ///
-    /// - Throws: Any error that occurs during connection creation or key application.
+    /// - Throws: An error if the key cannot be retrieved or applied.
+    func applyKeyProvider() throws
+    
+    /// Reopens the database connection.
+    ///
+    /// Creates a new connection using the provider and applies the
+    /// encryption key if ``keyProvider`` is set. Typically used when
+    /// the previous connection has become invalid.
+    ///
+    /// - Throws: An error if the new connection cannot be created or the key cannot be applied.
     func reconnect() throws
     
-    /// Executes the given closure with a live connection in a thread-safe manner.
+    /// Executes the given closure with an active connection.
     ///
-    /// All invocations are serialized to prevent concurrent database access.
+    /// The closure receives the connection and may perform any
+    /// database operations within the current context.
     ///
-    /// - Parameter closure: The database operation to perform.
-    /// - Returns: The result produced by the closure.
-    /// - Throws: Any error thrown by the closure.
+    /// - Parameter closure: The closure that accepts a connection.
+    /// - Returns: The value returned by the closure.
+    /// - Throws: An error if one occurs during closure execution.
     func perform<T>(_ closure: Perform<T>) rethrows -> T
     
     /// Executes the given closure within a transaction.
     ///
-    /// If no transaction is active, a new transaction of the specified type is started. The closure
-    /// is executed atomically: if it succeeds, the transaction is committed; if it throws, the
-    /// transaction is rolled back. If a transaction is already active, the closure is executed
-    /// without starting a new one.
+    /// If the connection is in autocommit mode, the method automatically
+    /// begins a transaction, executes the closure, and commits the changes.
+    /// In case of failure, the transaction is rolled back.
     ///
     /// - Parameters:
-    ///   - transaction: The type of transaction to begin (e.g., `deferred`, `immediate`, `exclusive`).
-    ///   - closure: The database operation to perform within the transaction.
-    /// - Returns: The result produced by the closure.
-    /// - Throws: Any error thrown by the closure or transaction control statements.
-    func perform<T>(
-        in transaction: TransactionType,
-        closure: Perform<T>
-    ) rethrows -> T
+    ///   - transaction: The type of transaction to begin.
+    ///   - closure: The closure that accepts a connection.
+    /// - Returns: The value returned by the closure.
+    /// - Throws: An error if one occurs during closure execution.
+    func perform<T>(in transaction: TransactionType, closure: Perform<T>) rethrows -> T
 }

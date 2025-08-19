@@ -78,7 +78,7 @@ open class RowDatabaseService:
         encoder: RowEncoder = RowEncoder(),
         decoder: RowDecoder = RowDecoder(),
         queue: DispatchQueue? = nil
-    ) rethrows {
+    ) throws {
         try self.init(
             provider: provider,
             encoder: encoder,
@@ -104,7 +104,7 @@ open class RowDatabaseService:
         encoder: RowEncoder = RowEncoder(),
         decoder: RowDecoder = RowDecoder(),
         queue: DispatchQueue? = nil
-    ) rethrows {
+    ) throws {
         self.encoder = encoder
         self.decoder = decoder
         try super.init(
