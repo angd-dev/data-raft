@@ -15,16 +15,6 @@ public protocol MigrationServiceProtocol: AnyObject, Sendable {
     /// Encryption key provider for the database service.
     var keyProvider: DatabaseServiceKeyProvider? { get set }
     
-    /// Applies an encryption key to the current database connection.
-    ///
-    /// - Throws: Any error that occurs while retrieving or applying the key.
-    func applyKeyProvider() throws
-    
-    /// Recreates the database connection and reapplies the encryption key if available.
-    ///
-    /// - Throws: Any error that occurs while creating the connection or applying the key.
-    func reconnect() throws
-    
     /// Registers a migration to be executed by the service.
     ///
     /// - Parameter migration: The migration to register.

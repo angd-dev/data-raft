@@ -12,7 +12,7 @@ import DataLiteCore
     init() throws {
         let connection = try Connection(location: .inMemory, options: .readwrite)
         self.connection = connection
-        self.migrationService = .init(service: try .init(connection: connection), storage: .init())
+        self.migrationService = .init(service: .init(connection: connection), storage: .init())
     }
     
     @Test func addMigration() throws {
