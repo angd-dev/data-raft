@@ -29,7 +29,7 @@ class DatabaseServiceTests: DatabaseServiceKeyProvider, @unchecked Sendable {
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("sqlite")
         
-        let service = try DatabaseService(provider: {
+        let service = DatabaseService(provider: {
             try Connection(
                 path: fileURL.path,
                 options: [.create, .readwrite]
@@ -40,7 +40,6 @@ class DatabaseServiceTests: DatabaseServiceKeyProvider, @unchecked Sendable {
         self.service = service
         self.service.keyProvider = self
         
-        try self.service.applyKeyProvider()
         try self.service.perform { connection in
             try connection.execute(sql: """
             CREATE TABLE IF NOT EXISTS Item (
@@ -55,7 +54,7 @@ class DatabaseServiceTests: DatabaseServiceKeyProvider, @unchecked Sendable {
         try? FileManager.default.removeItem(at: fileURL)
     }
     
-    func databaseService(keyFor service: any DatabaseServiceProtocol) throws -> Connection.Key? {
+    func databaseService(keyFor service: any DatabaseServiceProtocol) throws -> Connection.Key {
         currentKey
     }
     
@@ -184,16 +183,12 @@ extension DatabaseServiceTests {
                 try stmt.step()
             }
         })
-        currentKey = keyTwo
-        try service.reconnect()
-        try service.perform { connection in
-            let stmt = try connection.prepare(
-                sql: "SELECT COUNT(*) FROM Item",
-                options: []
-            )
-            try stmt.step()
-            #expect(connection.isAutocommit)
-            #expect(stmt.columnValue(at: 0) == 0)
-        }
+        let stmt = try connection.prepare(
+            sql: "SELECT COUNT(*) FROM Item",
+            options: []
+        )
+        try stmt.step()
+        #expect(connection.isAutocommit)
+        #expect(stmt.columnValue(at: 0) == 0)
     }
 }

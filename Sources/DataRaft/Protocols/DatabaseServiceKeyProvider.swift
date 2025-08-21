@@ -25,13 +25,13 @@ import DataLiteCore
 public protocol DatabaseServiceKeyProvider: AnyObject, Sendable {
     /// Returns the encryption key for the specified database service.
     ///
-    /// May return `nil` if the encryption key is currently unavailable or if the database
-    /// does not require encryption.
+    /// This method must either return a valid encryption key or throw an error if
+    /// the key cannot be retrieved.
     ///
     /// - Parameter service: The service requesting the key.
-    /// - Returns: The encryption key or `nil`.
+    /// - Returns: The encryption key.
     /// - Throws: An error if the key cannot be retrieved.
-    func databaseService(keyFor service: DatabaseServiceProtocol) throws -> Connection.Key?
+    func databaseService(keyFor service: DatabaseServiceProtocol) throws -> Connection.Key
     
     /// Indicates whether the service should attempt to reconnect if applying the key fails.
     ///
