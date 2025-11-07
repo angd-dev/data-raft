@@ -109,8 +109,7 @@ public struct BitPackVersion: VersionRepresentable, RawRepresentable, CustomStri
 
 // MARK: - ExpressibleByStringLiteral
 
-@available(iOS 16.0, *)
-@available(macOS 13.0, *)
+@available(iOS 16.0, macOS 13.0, *)
 extension BitPackVersion: ExpressibleByStringLiteral {
     /// An error related to parsing a version string.
     public enum ParseError: Swift.Error {

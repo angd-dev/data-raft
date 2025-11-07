@@ -14,14 +14,13 @@ import Foundation
     }
     
     @Test func initFromBundle_success() throws {
-        let bundle = Bundle.module  // или другой, если тестовая ресурсная цель другая
         let version = DummyVersion(rawValue: 2)
         
         let migration = Migration(
             version: version,
             byResource: "migration_1",
             extension: "sql",
-            in: bundle
+            in: .module
         )
         
         #expect(migration != nil)
