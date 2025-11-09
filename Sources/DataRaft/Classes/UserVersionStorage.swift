@@ -9,8 +9,8 @@ import DataLiteCore
 /// stores version data using the SQLite `PRAGMA user_version` mechanism. This approach is simple,
 /// efficient, and requires no additional tables.
 ///
-/// The generic ``Version`` type must conform to both ``VersionRepresentable`` and
-/// `RawRepresentable`, with `RawValue == UInt32`. This enables conversion between stored integer
+/// The generic `Version` type must conform to both ``VersionRepresentable`` and `RawRepresentable`,
+/// with `RawValue == UInt32`. This enables conversion between stored integer
 /// values and the application’s semantic version type.
 ///
 /// ## Topics
@@ -26,10 +26,9 @@ import DataLiteCore
 public final class UserVersionStorage<
     Version: VersionRepresentable & RawRepresentable
 >: Sendable, VersionStorage where Version.RawValue == UInt32 {
-    
     /// Errors related to reading or decoding the stored version.
     public enum Error: Swift.Error {
-        /// The stored `user_version` value could not be decoded into a valid ``Version``.
+        /// The stored `user_version` value could not be decoded into a valid `Version`.
         ///
         /// - Parameter value: The invalid raw `UInt32` value.
         case invalidStoredVersion(UInt32)
@@ -44,7 +43,7 @@ public final class UserVersionStorage<
     
     /// Returns the current schema version stored in the `user_version` field.
     ///
-    /// Reads the `PRAGMA user_version` value and attempts to decode it into a valid ``Version``.
+    /// Reads the `PRAGMA user_version` value and attempts to decode it into a valid `Version`.
     /// If decoding fails, this method throws an error.
     ///
     /// - Parameter connection: The active database connection.
@@ -62,7 +61,7 @@ public final class UserVersionStorage<
     /// Stores the specified schema version in the `user_version` field.
     ///
     /// Updates the SQLite `PRAGMA user_version` value with the raw `UInt32` representation of the
-    /// provided ``Version``.
+    /// provided `Version`.
     ///
     /// - Parameters:
     ///   - connection: The active database connection.

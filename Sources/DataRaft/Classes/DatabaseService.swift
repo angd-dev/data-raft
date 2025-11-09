@@ -2,17 +2,17 @@ import Foundation
 import DataLiteCore
 import DataLiteC
 
-/// A base database service handling transactions and event notifications.
+/// A base database service that handles transactions and posts change notifications.
 ///
 /// ## Overview
 ///
-/// `DatabaseService` provides a foundational layer for performing transactional database operations
-/// within a thread-safe execution context. It automatically posts lifecycle notifications — such as
-/// commit, rollback, and content changes — allowing observers to react to database updates in real
-/// time. By default, it routes events through ``Foundation/NotificationCenter/database`` so that
-/// clients can subscribe via a dedicated channel. This service is designed to be subclassed by
-/// higher-level data managers that encapsulate domain logic while relying on consistent connection
-/// and transaction handling.
+/// `DatabaseService` provides a lightweight transactional layer for performing database operations
+/// within a thread-safe execution context. It automatically detects modifications to the database
+/// and posts a ``databaseDidChange`` notification database updates, allowing observers to react to
+/// updates.
+///
+/// This class is intended to be subclassed by higher-level data managers that encapsulate domain
+/// logic while relying on consistent connection and transaction handling.
 ///
 /// ## Usage
 ///
@@ -57,9 +57,6 @@ import DataLiteC
 /// ### Notifications
 ///
 /// - ``databaseDidChange``
-/// - ``databaseWillCommit``
-/// - ``databaseDidRollback``
-/// - ``databaseDidPerform``
 open class DatabaseService:
     ConnectionService,
     DatabaseServiceProtocol,
@@ -70,47 +67,26 @@ open class DatabaseService:
     
     private let center: NotificationCenter
     
-    /// Notification posted after the database content changes.
-    ///
-    /// Observers listen to this event to refresh cached data or update dependent components once
-    /// modifications are committed. The notification’s `userInfo` may include
-    /// ``Foundation/Notification/UserInfoKey/action`` describing the SQLite action.
+    /// Notification posted after the database content changes with this service.
     public static let databaseDidChange = Notification.Name("DatabaseService.databaseDidChange")
-    
-    /// Notification posted immediately before a transaction commits.
-    ///
-    /// Observers can perform validation or prepare for an upcoming state change while the
-    /// transaction is still in progress.
-    public static let databaseWillCommit = Notification.Name("DatabaseService.databaseWillCommit")
-    
-    /// Notification posted after a transaction rolls back.
-    ///
-    /// Observers use this event to revert in-memory state or reset caches that rely on pending
-    /// changes.
-    public static let databaseDidRollback = Notification.Name("DatabaseService.databaseDidRollback")
-    
-    /// Notification posted after any database operation completes, regardless of outcome.
-    ///
-    /// The service emits this event after finishing a `perform(_:)` block so observers can
-    /// synchronize state even when the operation is read-only or aborted.
-    ///
-    /// - Important: Confirm that the associated transaction was not rolled back before relying on
-    ///   side effects.
-    public static let databaseDidPerform = Notification.Name("DatabaseService.databaseDidPerform")
     
     // MARK: - Inits
     
-    /// Creates a database service that posts lifecycle events to the provided notification center.
+    /// Creates a database service with a specified notification center.
     ///
-    /// The underlying connection handling matches ``ConnectionService``; the connection is created
-    /// lazily and all work executes on the managed serial queue.
+    /// Configures an internal serial queue for thread-safe access to the database. The connection
+    /// itself is not created during initialization — it is established lazily on first use (for
+    /// example, inside ``perform(_:)``).
+    ///
+    /// The internal queue is created with QoS `.utility`. If `queue` is provided, it becomes the
+    /// target of the internal queue.
     ///
     /// - Parameters:
     ///   - provider: A closure that returns a new database connection.
     ///   - config: An optional configuration closure called after the connection is established and
     ///     the encryption key is applied.
-    ///   - queue: An optional target queue for the internal serial queue.
-    ///   - center: A notification center for posting database events.
+    ///   - queue: An optional target queue for the internal one.
+    ///   - center: The notification center used to post database change notifications.
     public init(
         provider: @escaping ConnectionProvider,
         config: ConnectionConfig? = nil,
@@ -121,39 +97,54 @@ open class DatabaseService:
         super.init(provider: provider, config: config, queue: queue)
     }
     
-    /// Creates a database service that posts lifecycle events to the shared database notification
-    /// center.
+    /// Creates a database service using the default database notification center.
     ///
-    /// The connection is established lazily on first access and all work executes on the internal
-    /// queue defined in ``ConnectionService``.
+    /// Configures an internal serial queue for thread-safe access to the database. The connection
+    /// itself is not created during initialization — it is established lazily on first use (for
+    /// example, inside ``perform(_:)``).
+    ///
+    /// The service posts change notifications through ``Foundation/NotificationCenter/databaseCenter``,
+    /// which provides a shared channel for observing database events across the application.
+    ///
+    /// The internal queue is created with QoS `.utility`. If `queue` is provided, it becomes the
+    /// target of the internal queue.
     ///
     /// - Parameters:
     ///   - provider: A closure that returns a new database connection.
     ///   - config: An optional configuration closure called after the connection is established and
     ///     the encryption key is applied.
-    ///   - queue: An optional target queue for the internal serial queue.
+    ///   - queue: An optional target queue for the internal one.
     public required init(
         provider: @escaping ConnectionProvider,
         config: ConnectionConfig? = nil,
         queue: DispatchQueue? = nil
     ) {
-        self.center = .database
+        self.center = .databaseCenter
         super.init(provider: provider, config: config, queue: queue)
     }
     
     // MARK: - Performing Operations
     
-    /// Executes a closure with a managed database connection and posts a completion notification.
+    /// Executes a closure within the context of a managed database connection.
     ///
-    /// The override mirrors ``ConnectionService/perform(_:)`` for queue-confined execution while
-    /// ensuring ``DatabaseService/databaseDidPerform`` is delivered after the closure completes.
+    /// Runs the operation on the service’s internal queue and ensures that the connection is valid
+    /// before use. If the connection is unavailable or fails during execution, this method throws
+    /// an error.
     ///
-    /// - Parameter closure: The operation to execute using the open connection.
-    /// - Returns: The value returned by the closure.
-    /// - Throws: Errors thrown by the closure or underlying connection.
+    /// After the closure completes, if the database content has changed, the service posts a
+    /// ``databaseDidChange`` notification through its configured notification center.
+    ///
+    /// - Parameter closure: The operation to perform using the connection.
+    /// - Returns: The result produced by the closure.
+    /// - Throws: An error thrown by the closure or the connection.
     public override func perform<T>(_ closure: Perform<T>) throws -> T {
         try super.perform { connection in
-            defer { center.post(name: Self.databaseDidPerform, object: self) }
+            let changes = connection.totalChanges
+            defer {
+                if changes != connection.totalChanges {
+                    center.post(name: Self.databaseDidChange, object: self)
+                }
+            }
             return try closure(connection)
         }
     }
@@ -221,28 +212,43 @@ open class DatabaseService:
     
     // MARK: - ConnectionDelegate
     
-    /// Posts ``DatabaseService/databaseDidChange`` when the database content updates.
+    /// Handles database updates reported by the active connection.
+    ///
+    /// Called after an SQL statement modifies the database content. Subclasses can override this
+    /// method to observe specific actions (for example, inserts, updates, or deletes).
+    ///
+    /// - Important: This method must not execute SQL statements or otherwise alter the connection
+    ///   state.
     ///
     /// - Parameters:
-    ///   - connection: The connection that performed the change.
-    ///   - action: The SQLite action describing the modification.
-    public func connection(_ connection: any ConnectionProtocol, didUpdate action: SQLiteAction) {
-        let userInfo = [Notification.UserInfoKey.action: action]
-        center.post(name: Self.databaseDidChange, object: self, userInfo: userInfo)
+    ///   - connection: The connection that performed the update.
+    ///   - action: The SQLite action describing the change.
+    open func connection(_ connection: any ConnectionProtocol, didUpdate action: SQLiteAction) {
     }
     
-    /// Posts ``DatabaseService/databaseWillCommit`` before a transaction commits.
+    /// Called immediately before the connection commits a transaction.
+    ///
+    /// Subclasses can override this method to perform validation or consistency checks prior to
+    /// committing. Throwing an error cancels the commit and triggers a rollback.
+    ///
+    /// - Important: This method must not execute SQL statements or otherwise alter the connection
+    ///   state.
     ///
     /// - Parameter connection: The connection preparing to commit.
-    public func connectionWillCommit(_ connection: any ConnectionProtocol) throws {
-        center.post(name: Self.databaseWillCommit, object: self)
+    /// - Throws: An error to cancel the commit and roll back the transaction.
+    open func connectionWillCommit(_ connection: any ConnectionProtocol) throws {
     }
     
-    /// Posts ``DatabaseService/databaseDidRollback`` after a transaction rollback.
+    /// Called after the connection rolls back a transaction.
     ///
-    /// - Parameter connection: The connection that rolled back.
-    public func connectionDidRollback(_ connection: any ConnectionProtocol) {
-        center.post(name: Self.databaseDidRollback, object: self)
+    /// Subclasses can override this method to handle cleanup or recovery logic following a
+    /// rollback.
+    ///
+    /// - Important: This method must not execute SQL statements or otherwise alter the connection
+    /// state.
+    ///
+    /// - Parameter connection: The connection that rolled back the transaction.
+    open func connectionDidRollback(_ connection: any ConnectionProtocol) {
     }
     
     // MARK: - Internal Methods

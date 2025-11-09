@@ -77,14 +77,14 @@ open class ModelDatabaseService: DatabaseService, @unchecked Sendable {
     ///   - provider: A closure that returns a new database connection.
     ///   - config: Optional configuration for the connection.
     ///   - queue: The dispatch queue used for serializing database operations.
-    ///   - center: The notification center used for database events. Defaults to `.database`.
+    ///   - center: The notification center used for database events. Defaults to `.databaseCenter`.
     ///   - encoder: The encoder for converting models into SQLite rows.
     ///   - decoder: The decoder for converting rows back into model instances.
     public init(
         provider: @escaping ConnectionProvider,
         config: ConnectionConfig? = nil,
         queue: DispatchQueue? = nil,
-        center: NotificationCenter = .database,
+        center: NotificationCenter = .databaseCenter,
         encoder: RowEncoder,
         decoder: RowDecoder
     ) {

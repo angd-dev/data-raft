@@ -5,5 +5,5 @@ public extension NotificationCenter {
     ///
     /// Use this instance to post and observe notifications related to database lifecycle and
     /// operations instead of using the shared `NotificationCenter.default`.
-    static let database = NotificationCenter()
+    static let databaseCenter = NotificationCenter()
 }
