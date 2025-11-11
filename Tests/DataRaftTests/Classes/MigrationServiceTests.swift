@@ -3,7 +3,7 @@ import DataLiteCore
 @testable import DataRaft
 
 @Suite struct MigrationServiceTests {
-    private typealias MigrationService = DataRaft.MigrationService<DatabaseService, VersionStorage>
+    private typealias MigrationService = DataRaft.MigrationService<VersionStorage>
     private typealias MigrationError = DataRaft.MigrationError<MigrationService.Version>
     
     private var connection: Connection!
@@ -12,7 +12,7 @@ import DataLiteCore
     init() throws {
         let connection = try Connection(location: .inMemory, options: .readwrite)
         self.connection = connection
-        self.migrationService = .init(service: .init(connection: connection), storage: .init())
+        self.migrationService = .init(connection: connection)
     }
     
     @Test func addMigration() throws {
@@ -68,7 +68,7 @@ import DataLiteCore
     @Test func migrateEmpty() async throws {
         let migration1 = Migration<Int32>(version: 1, byResource: "migration_1", extension: "sql", in: .module)!
         let migration2 = Migration<Int32>(version: 2, byResource: "migration_2", extension: "sql", in: .module)!
-        let migration4 = Migration<Int32>(version: 4, byResource: "migration_4", extension: "sql", in: .module)!
+        let migration4 = Migration<Int32>(version: 4, byResource: "empty", extension: "sql", in: .module)!
         
         try migrationService.add(migration1)
         try migrationService.add(migration2)
@@ -91,11 +91,11 @@ private extension MigrationServiceTests {
     struct VersionStorage: DataRaft.VersionStorage {
         typealias Version = Int32
         
-        func getVersion(_ connection: Connection) throws -> Version {
+        func getVersion(_ connection: ConnectionProtocol) throws -> Version {
             connection.userVersion
         }
         
-        func setVersion(_ connection: Connection, _ version: Version) throws {
+        func setVersion(_ connection: ConnectionProtocol, _ version: Version) throws {
             connection.userVersion = version
         }
     }

@@ -16,14 +16,8 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(
-            url: "https://github.com/angd-dev/data-lite-core.git",
-            revision: "5c6942bd0b9636b5ac3e550453c07aac843e8416"
-        ),
-        .package(
-            url: "https://github.com/angd-dev/data-lite-coder.git",
-            revision: "5aec6ea5784dd5bd098bfa98036fbdc362a8931c"
-        ),
+        .package(url: "https://github.com/angd-dev/data-lite-core.git", .upToNextMinor(from: "1.1.0")),
+        .package(url: "https://github.com/angd-dev/data-lite-coder.git", .upToNextMinor(from: "1.0.0")),
         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.0.0")
     ],
     targets: [
@@ -38,10 +32,10 @@ let package = Package(
             name: "DataRaftTests",
             dependencies: ["DataRaft"],
             resources: [
+                .copy("Resources/empty.sql"),
                 .copy("Resources/migration_1.sql"),
                 .copy("Resources/migration_2.sql"),
-                .copy("Resources/migration_3.sql"),
-                .copy("Resources/migration_4.sql")
+                .copy("Resources/migration_3.sql")
             ]
         )
     ]

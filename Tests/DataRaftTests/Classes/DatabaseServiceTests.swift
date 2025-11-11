@@ -4,7 +4,7 @@ import DataLiteC
 import DataLiteCore
 import DataRaft
 
-class DatabaseServiceTests: DatabaseServiceKeyProvider, @unchecked Sendable {
+class DatabaseServiceTests: ConnectionServiceKeyProvider, @unchecked Sendable {
     private let keyOne = Connection.Key.rawKey(Data([
         0xe8, 0xd7, 0x92, 0xa2, 0xa1, 0x35, 0x56, 0xc0,
         0xfd, 0xbb, 0x2f, 0x91, 0xe8, 0x0b, 0x4b, 0x2a,
@@ -54,12 +54,15 @@ class DatabaseServiceTests: DatabaseServiceKeyProvider, @unchecked Sendable {
         try? FileManager.default.removeItem(at: fileURL)
     }
     
-    func databaseService(keyFor service: any DatabaseServiceProtocol) throws -> Connection.Key {
+    func connectionService(keyFor service: any ConnectionServiceProtocol) throws -> Connection.Key {
         currentKey
     }
     
-    func databaseService(shouldReconnect service: any DatabaseServiceProtocol) -> Bool {
+    func connectionService(shouldReconnect service: any ConnectionServiceProtocol) -> Bool {
         true
+    }
+    
+    func connectionService(_ service: any ConnectionServiceProtocol, didReceive error: any Error) {
     }
 }
 
@@ -138,8 +141,8 @@ extension DatabaseServiceTests {
             path: fileURL.path,
             options: [.readwrite]
         )
-        try connection.apply(currentKey)
-        try connection.rekey(keyTwo)
+        try connection.apply(currentKey, name: nil)
+        try connection.rekey(keyTwo, name: nil)
         currentKey = keyTwo
         
         try service.perform(in: .deferred) { connection in
@@ -166,9 +169,9 @@ extension DatabaseServiceTests {
             path: fileURL.path,
             options: [.readwrite]
         )
-        try connection.apply(currentKey)
-        try connection.rekey(keyTwo)
-        let error = Connection.Error(
+        try connection.apply(currentKey, name: nil)
+        try connection.rekey(keyTwo, name: nil)
+        let error = SQLiteError(
             code: SQLITE_NOTADB,
             message: "file is not a database"
         )
