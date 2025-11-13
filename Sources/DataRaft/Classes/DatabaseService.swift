@@ -65,7 +65,7 @@ open class DatabaseService:
 {
     // MARK: - Properties
     
-    private let center: NotificationCenter
+    private let center: NotificationCenter?
     
     /// Notification posted after the database content changes with this service.
     public static let databaseDidChange = Notification.Name("DatabaseService.databaseDidChange")
@@ -86,12 +86,12 @@ open class DatabaseService:
     ///   - config: An optional configuration closure called after the connection is established and
     ///     the encryption key is applied.
     ///   - queue: An optional target queue for the internal one.
-    ///   - center: The notification center used to post database change notifications.
+    ///   - center: An optional notification center used to post database change notifications.
     public init(
         provider: @escaping ConnectionProvider,
         config: ConnectionConfig? = nil,
         queue: DispatchQueue? = nil,
-        center: NotificationCenter
+        center: NotificationCenter?
     ) {
         self.center = center
         super.init(provider: provider, config: config, queue: queue)
@@ -142,7 +142,7 @@ open class DatabaseService:
             let changes = connection.totalChanges
             defer {
                 if changes != connection.totalChanges {
-                    center.post(name: Self.databaseDidChange, object: self)
+                    center?.post(name: Self.databaseDidChange, object: self)
                 }
             }
             return try closure(connection)
